@@ -32,8 +32,25 @@ def extension_suffix(accumulated: list[int], prompt_tokens: list[int]) -> list[i
         extension_suffix([1, 2, 3], [1, 2])          -> None
         extension_suffix([], [1, 2])                 -> [1, 2]  (an empty sequence is a prefix of anything)
     """
-    # TODO(student): implement this function.
-    raise NotImplementedError
+    if(len(accumulated)==0 or len(prompt_tokens)): 
+        return prompt_tokens
+
+    if(len(prompt_tokens)<len(accumulated)):
+        return None
+
+    for i in range(0,len(accumulated)):
+        if(accumulated[i]!=prompt_tokens[i]): 
+            return None
+
+    return prompt_tokens[i+1:]
+
+
+def _get_call_fields(call):
+    """Robustly extract prompt, completion, and logprobs from an LLM call object."""
+    prompt = getattr(call, "prompt_tokens", getattr(call, "prompt", None))
+    completion = getattr(call, "completion_tokens", getattr(call, "completion", None))
+    logprobs = getattr(call, "logprobs", getattr(call, "completion_logprobs", None))
+    return prompt, completion, logprobs
 
 
 def stitch_trajectory(traj: Trajectory) -> list[TokenSequence]:
@@ -78,8 +95,77 @@ def stitch_trajectory(traj: Trajectory) -> list[TokenSequence]:
 
     Returns: list of TokenSequence (possibly empty).
     """
-    # TODO(student): implement this function.
-    raise NotImplementedError
+    sequences: list[TokenSequence] = []
+
+    acc_tokens: list[int] = []
+    acc_mask: list[int] = []
+    acc_logprobs: list[float] = []
+    acc_advantages: list[float] = []
+
+    def flush_current():
+        nonlocal acc_tokens, acc_mask, acc_logprobs, acc_advantages
+        if len(acc_tokens) >= 2 and any(m == 1 for m in acc_mask):
+            sequences.append(
+                TokenSequence(
+                    tokens=list(acc_tokens),
+                    mask=list(acc_mask),
+                    logprobs=list(acc_logprobs),
+                    advantages=list(acc_advantages),
+                )
+            )
+        acc_tokens = []
+        acc_mask = []
+        acc_logprobs = []
+        acc_advantages = []
+
+    for call in traj.calls:
+        prompt, completion, logprobs = _get_call_fields(call)
+
+        # Check if call's prompt extends the currently accumulated token sequence
+        is_extension = (
+            len(acc_tokens) > 0
+            and len(prompt) >= len(acc_tokens)
+            and prompt[: len(acc_tokens)] == acc_tokens
+        )
+
+        if not is_extension:
+            # Extension broken: emit current accumulated sequence and start a new one
+            flush_current()
+
+            if not prompt:
+                continue
+
+            # Initialize new sequence with prompt
+            acc_tokens.append(prompt[0])
+            for p_tok in prompt[1:]:
+                acc_tokens.append(p_tok)
+                acc_mask.append(0)
+                acc_logprobs.append(0.0)
+                acc_advantages.append(0.0)
+
+            prompt_suffix = []
+        else:
+            # Extension succeeded: only take prompt tokens that weren't in acc_tokens yet
+            prompt_suffix = prompt[len(acc_tokens) :]
+
+        # Append prompt suffix tokens
+        for p_tok in prompt_suffix:
+            acc_tokens.append(p_tok)
+            acc_mask.append(0)
+            acc_logprobs.append(0.0)
+            acc_advantages.append(0.0)
+
+        # Append completion tokens and their sampling logprobs
+        for c_tok, lp in zip(completion, logprobs):
+            acc_tokens.append(c_tok)
+            acc_mask.append(1)
+            acc_logprobs.append(float(lp))
+            acc_advantages.append(0.0)
+
+    # Flush any remaining accumulated sequence at the end of the trajectory
+    flush_current()
+
+    return sequences
 
 
 def trajectory_to_training_sequences(traj: Trajectory, advantage: float) -> list[TokenSequence]:
@@ -88,5 +174,24 @@ def trajectory_to_training_sequences(traj: Trajectory, advantage: float) -> list
     position stays 0.0. (In REINFORCE/GRPO, all tokens the policy generated
     in an episode share the episode-level advantage.)
     """
-    # TODO(student): implement this function.
-    raise NotImplementedError
+    sequences = stitch_trajectory(traj)
+    training_sequences: list[TokenSequence] = []
+
+    for seq in sequences:
+        # Broadcast `advantage` to positions where mask == 1, keep 0.0 for mask == 0
+        broadcasted_advantages = [
+            float(advantage) if m == 1 else 0.0
+            for m in seq.mask
+        ]
+
+        # Construct new TokenSequence with updated advantages
+        training_sequences.append(
+            TokenSequence(
+                tokens=seq.tokens,
+                mask=seq.mask,
+                logprobs=seq.logprobs,
+                advantages=broadcasted_advantages,
+            )
+        )
+
+    return training_sequences

@@ -36,5 +36,25 @@ def compute_group_advantages(
     variant, which drops the std term to avoid biasing updates by group
     difficulty). See the handout's background section.
     """
-    # TODO(student): implement this function.
-    raise NotImplementedError
+    if method == "reinforce":
+        return [float(r) for r in rewards]
+
+    elif method == "grpo":
+        if len(rewards) < 2:
+            raise ValueError(f"GRPO requires a group size of at least 2, got {len(rewards)}")
+
+        # Check if all rewards in the group are identical
+        first_reward = rewards[0]
+        if all(r == first_reward for r in rewards):
+            return None
+
+        # Compute group mean reward
+        mean_reward = sum(rewards) / len(rewards)
+
+        # Return centered advantages (Dr. GRPO style: mean baseline only, no std dev scaling)
+        return [float(r - mean_reward) for r in rewards]
+
+    else:
+        raise ValueError(f"Unsupported advantage method: '{method}'")
+
+    
