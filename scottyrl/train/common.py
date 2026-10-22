@@ -36,8 +36,14 @@ async def collect_group(
 
     Returns: `group_size` trajectories, in rollout order.
     """
-    # TODO(student): implement this function.
-    raise NotImplementedError
+    coroutines = [
+        run_episode(agent_cls(policy), env_factory(task))
+        for _ in range(group_size)
+    ]
+
+    trajectories = await asyncio.gather(*coroutines)
+    return list(trajectories)
+    
 
 
 def groups_to_batch(
@@ -65,5 +71,48 @@ def groups_to_batch(
         "num_sequences"           len(sequences)
         "num_action_tokens"       total mask==1 positions in the batch
     """
-    # TODO(student): implement this function.
-    raise NotImplementedError
+    sequences: list[TokenSequence] = []
+    
+    num_groups = len(groups)
+    num_degenerate_groups = 0
+    all_rewards: list[float] = []
+
+    for group in groups:
+        # 1. Extract episode rewards for all trajectories in this group
+        group_rewards = [float(traj.reward) for traj in group]
+        all_rewards.extend(group_rewards)
+
+        # 2. Compute per-trajectory advantages
+        advantages = compute_group_advantages(group_rewards, method=method)
+
+        # 3. Handle degenerate groups
+        if advantages is None:
+            num_degenerate_groups += 1
+            continue
+
+        # 4. Generate training sequences for valid groups
+        for traj, adv in zip(group, advantages):
+            traj_seqs = trajectory_to_training_sequences(traj, adv)
+            sequences.extend(traj_seqs)
+
+    # 5. Compute summary statistics
+    frac_degenerate = (
+        float(num_degenerate_groups) / num_groups if num_groups > 0 else 0.0
+    )
+    mean_reward = (
+        sum(all_rewards) / len(all_rewards) if len(all_rewards) > 0 else 0.0
+    )
+    num_action_tokens = sum(
+        sum(1 for m in seq.mask if m == 1) for seq in sequences
+    )
+
+    stats = {
+        "num_groups": num_groups,
+        "num_degenerate_groups": num_degenerate_groups,
+        "frac_degenerate_groups": frac_degenerate,
+        "mean_reward": mean_reward,
+        "num_sequences": len(sequences),
+        "num_action_tokens": num_action_tokens,
+    }
+
+    return sequences, stats
