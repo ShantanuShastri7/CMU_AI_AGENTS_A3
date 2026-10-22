@@ -335,14 +335,15 @@ class TinkerSession:
         https://tinker-docs.thinkingmachines.ai/tinker/api-reference/trainingclient/
         """
         import tinker
-        futureForwardBackward = self.training_client.forward_backward_async(
+
+        fwd_future = await self.training_client.forward_backward_async(
             datums, loss_fn=loss_fn
         )
         params = tinker.AdamParams(learning_rate=lr, grad_clip_norm=grad_clip_norm)
-        futureOptimStep = self.training_client.optim_step_async(params)
+        opt_future = await self.training_client.optim_step_async(params)
 
-        fwd_result = await futureForwardBackward.result_async()
-        opt_result = await futureOptimStep.result_async()
+        fwd_result = await fwd_future.result_async()
+        opt_result = await opt_future.result_async()
         return fwd_result, opt_result
 
 

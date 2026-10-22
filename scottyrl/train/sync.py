@@ -167,6 +167,7 @@ class SyncTrainer:
         Returns: list of groups - one group (list of Trajectory) per sampled task.
         """
         sampled_tasks = self.rng.sample(self.train_tasks, self.cfg.tasks_per_batch)
+        agent_cls = self.agent_cls()
 
         # Create coroutines for collecting rollouts for each task concurrently
         group_tasks = [
@@ -175,7 +176,7 @@ class SyncTrainer:
                 task=task,
                 env_factory=self.env_factory,
                 group_size=self.cfg.group_size,
-                agent_cls=self.cfg.agent_cls,
+                agent_cls=agent_cls,
             )
             for task in sampled_tasks
         ]
@@ -204,7 +205,12 @@ class SyncTrainer:
         `train()` hands it to the given `record_training`; do not log it
         here.
         """
-        return await self.session.train_step(seqs)
+        return await self.session.train_step(
+            seqs,
+            loss_fn=self.cfg.loss_fn,
+            lr=self.cfg.lr,
+            grad_clip_norm=self.cfg.grad_clip_norm,
+        )
 
     async def evaluate_now(self, policy) -> dict:
         """Held-out evaluation of `policy`: the first cfg.eval_tasks
@@ -221,7 +227,7 @@ class SyncTrainer:
             tasks=val_tasks,
             env_factory=self.env_factory,
             k=self.cfg.eval_k,
-            agent_cls=self.cfg.agent_cls,
+            agent_cls=self.agent_cls(),
         )
 
     # ------------------------------------------------------------- driver --
@@ -259,7 +265,7 @@ class SyncTrainer:
         client = await self.session.new_sampling_client("step_000000")
         policy = self.make_policy(client)
 
-        # 2. Main training loop across 1..cfg.num_steps
+        # Main training loop across 1..cfg.num_steps
         for step in range(1, self.cfg.num_steps + 1):
             # Collect rollouts using the current policy
             groups = await self.collect_batch(policy)
@@ -278,9 +284,9 @@ class SyncTrainer:
                 policy = self.make_policy(client)
 
             # Record training step stats and optimizer metrics
-            await self.record_training(step, stats, train_metrics)
+            self.record_training(step, groups, seqs, stats, train_metrics)
 
-            # 3. Periodic held-out evaluation check
+            # Periodic held-out evaluation check
             if self.eval_due(step):
                 eval_metrics = await self.evaluate_now(policy)
-                await self.record_evaluation(step, eval_metrics)
+                self.record_evaluation(step, eval_metrics)

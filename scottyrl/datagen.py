@@ -32,17 +32,13 @@ def extension_suffix(accumulated: list[int], prompt_tokens: list[int]) -> list[i
         extension_suffix([1, 2, 3], [1, 2])          -> None
         extension_suffix([], [1, 2])                 -> [1, 2]  (an empty sequence is a prefix of anything)
     """
-    if(len(accumulated)==0 or len(prompt_tokens)): 
-        return prompt_tokens
-
-    if(len(prompt_tokens)<len(accumulated)):
+    if not accumulated:
+        return prompt_tokens[:]
+    if len(prompt_tokens) < len(accumulated):
         return None
-
-    for i in range(0,len(accumulated)):
-        if(accumulated[i]!=prompt_tokens[i]): 
-            return None
-
-    return prompt_tokens[i+1:]
+    if prompt_tokens[:len(accumulated)] != accumulated:
+        return None
+    return prompt_tokens[len(accumulated):]
 
 
 def _get_call_fields(call):
